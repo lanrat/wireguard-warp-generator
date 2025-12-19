@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WARP WireGuard Config Generator</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
     <style>
         :root {
             --pico-font-size: 16px;
@@ -55,6 +56,54 @@
             width: 100%;
             margin-bottom: 1rem;
         }
+        .account-info {
+            background-color: var(--pico-card-background-color);
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: var(--pico-border-radius);
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .account-info h3 {
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+        }
+        .account-info dl {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.25rem 1rem;
+            margin: 0;
+        }
+        .account-info dt {
+            font-weight: bold;
+            color: var(--pico-muted-color);
+        }
+        .account-info dd {
+            margin: 0;
+        }
+        .qr-section {
+            text-align: center;
+            margin: 1rem 0;
+        }
+        #qrCode {
+            display: inline-block;
+            padding: 1rem;
+            background: white;
+            border-radius: var(--pico-border-radius);
+        }
+        #qrCode canvas {
+            display: block;
+        }
+        .qr-label {
+            margin-top: 0.5rem;
+            color: var(--pico-muted-color);
+            font-size: 0.875rem;
+        }
+        footer {
+            text-align: center;
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--pico-muted-border-color);
+        }
     </style>
 </head>
 <body>
@@ -99,6 +148,29 @@
         <div id="error" class="error hidden"></div>
 
         <div id="outputSection" class="hidden">
+            <div id="accountInfo" class="account-info">
+                <h3>Account Info</h3>
+                <dl>
+                    <dt>Account ID</dt>
+                    <dd id="accountId">-</dd>
+                    <dt>Device ID</dt>
+                    <dd id="deviceId">-</dd>
+                    <dt>Account Type</dt>
+                    <dd id="accountType">-</dd>
+                    <dt>License</dt>
+                    <dd id="license">-</dd>
+                    <dt>Created</dt>
+                    <dd id="created">-</dd>
+                    <dt>Expires</dt>
+                    <dd id="expires">-</dd>
+                </dl>
+            </div>
+
+            <div class="qr-section">
+                <div id="qrCode"></div>
+                <p class="qr-label">Scan with WireGuard mobile app</p>
+            </div>
+
             <label>
                 WireGuard Configuration
                 <textarea id="configOutput" class="config-output" readonly></textarea>
@@ -108,6 +180,10 @@
                 <button id="downloadBtn" class="secondary">Download warp.conf</button>
             </div>
         </div>
+
+        <footer>
+            <p><a href="https://github.com/lanrat/wireguard-warp-generator">View source on GitHub</a></p>
+        </footer>
     </main>
 
     <script src="wireguard.js"></script>
@@ -122,6 +198,7 @@
         const outputSection = document.getElementById('outputSection');
         const errorDiv = document.getElementById('error');
         const optionsForm = document.getElementById('optionsForm');
+        const qrCodeDiv = document.getElementById('qrCode');
 
         function showError(message) {
             errorDiv.textContent = message;
@@ -142,6 +219,40 @@
                 deviceType: formData.get('deviceType'),
                 locale: formData.get('locale')
             };
+        }
+
+        function formatDate(isoString) {
+            if (!isoString) return '-';
+            return new Date(isoString).toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        }
+
+        function displayAccountInfo(warpResponse) {
+            document.getElementById('accountId').textContent = warpResponse.account?.id || '-';
+            document.getElementById('deviceId').textContent = warpResponse.id || '-';
+            document.getElementById('accountType').textContent =
+                (warpResponse.account?.warp_plus ? 'WARP+ ' : '') +
+                (warpResponse.account?.account_type || 'free');
+            document.getElementById('license').textContent = warpResponse.account?.license || '-';
+            document.getElementById('created').textContent = formatDate(warpResponse.created);
+            document.getElementById('expires').textContent = formatDate(warpResponse.account?.ttl);
+        }
+
+        async function generateQRCode(config) {
+            qrCodeDiv.innerHTML = '';
+            try {
+                await QRCode.toCanvas(qrCodeDiv.appendChild(document.createElement('canvas')), config, {
+                    width: 256,
+                    margin: 0,
+                    errorCorrectionLevel: 'M'
+                });
+            } catch (err) {
+                console.error('QR code generation failed:', err);
+                qrCodeDiv.innerHTML = '<p>QR code generation failed</p>';
+            }
         }
 
         async function registerWithWarp(publicKey, options) {
@@ -210,6 +321,12 @@ Endpoint = ${peer.endpoint.host}`;
 
                 // Generate config
                 const config = generateConfig(keypair.privateKey, warpResponse, options);
+
+                // Display account info
+                displayAccountInfo(warpResponse);
+
+                // Generate QR code
+                await generateQRCode(config);
 
                 // Display config
                 configOutput.value = config;

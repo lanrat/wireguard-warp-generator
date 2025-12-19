@@ -4,9 +4,12 @@
 #
 # Usage: ./warp-register.sh > warp.conf
 #        ./warp-register.sh -v > warp.conf  # verbose mode
+#        ./warp-register.sh --qr            # display QR code in terminal
 #
 # Options:
 #   -v, --verbose     Print verbose output including API response to stderr
+#   -q, --qr          Display QR code in terminal (requires qrencode)
+#   -i, --info        Display account info to stderr
 #
 # Environment variables (with defaults):
 #   WARP_DNS          - DNS servers (default: "1.1.1.1, 1.0.0.1")
@@ -20,8 +23,10 @@
 
 set -euo pipefail
 
-# Verbose mode flag
+# Flags
 VERBOSE=false
+SHOW_QR=false
+SHOW_INFO=false
 
 # Parse command line arguments
 parse_args() {
@@ -31,8 +36,16 @@ parse_args() {
                 VERBOSE=true
                 shift
                 ;;
+            -q|--qr)
+                SHOW_QR=true
+                shift
+                ;;
+            -i|--info)
+                SHOW_INFO=true
+                shift
+                ;;
             -h|--help)
-                head -n 18 "$0" | tail -n +2 | sed 's/^# \?//'
+                head -n 22 "$0" | tail -n +2 | sed 's/^# \?//'
                 exit 0
                 ;;
             *)
@@ -77,6 +90,13 @@ check_dependencies() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Error: Missing required dependencies: ${missing[*]}" >&2
         echo "Please install them and try again." >&2
+        exit 1
+    fi
+
+    # Check for qrencode if --qr flag is set
+    if [[ "$SHOW_QR" == true ]] && ! command -v qrencode &>/dev/null; then
+        echo "Error: qrencode is required for --qr flag" >&2
+        echo "Install it with: apt install qrencode / brew install qrencode" >&2
         exit 1
     fi
 }
@@ -183,6 +203,19 @@ parse_warp_response() {
     fi
 }
 
+# Display account info
+display_account_info() {
+    echo "" >&2
+    echo "=== Account Info ===" >&2
+    echo "Account ID:   $(echo "$WARP_RESPONSE" | jq -r '.account.id // "-"')" >&2
+    echo "Device ID:    $(echo "$WARP_RESPONSE" | jq -r '.id // "-"')" >&2
+    echo "Account Type: $(echo "$WARP_RESPONSE" | jq -r '(if .account.warp_plus then "WARP+ " else "" end) + (.account.account_type // "free")')" >&2
+    echo "License:      $(echo "$WARP_RESPONSE" | jq -r '.account.license // "-"')" >&2
+    echo "Created:      $(echo "$WARP_RESPONSE" | jq -r '.created // "-"')" >&2
+    echo "Expires:      $(echo "$WARP_RESPONSE" | jq -r '.account.ttl // "-"')" >&2
+    echo "" >&2
+}
+
 # Generate WireGuard configuration
 generate_wireguard_config() {
     local address="$INTERFACE_IPV4/32"
@@ -220,6 +253,15 @@ ${persistent_keepalive_line:+$persistent_keepalive_line}
 EOF
 }
 
+# Display QR code in terminal
+display_qr_code() {
+    local config="$1"
+    echo "" >&2
+    echo "=== QR Code (scan with WireGuard mobile app) ===" >&2
+    echo "$config" | qrencode -t ANSIUTF8 >&2
+    echo "" >&2
+}
+
 # Main execution
 main() {
     parse_args "$@"
@@ -236,10 +278,26 @@ main() {
     echo "Parsing response..." >&2
     parse_warp_response
 
+    # Display account info if requested
+    if [[ "$SHOW_INFO" == true ]]; then
+        display_account_info
+    fi
+
     echo "Generating WireGuard configuration..." >&2
+
+    # Generate config to variable so we can use it for both output and QR
+    local config
+    config=$(generate_wireguard_config)
+
+    # Display QR code if requested
+    if [[ "$SHOW_QR" == true ]]; then
+        display_qr_code "$config"
+    fi
+
     echo "" >&2
 
-    generate_wireguard_config
+    # Output config to stdout
+    echo "$config"
 }
 
 main "$@"
