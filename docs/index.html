@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WARP WireGuard Config Generator</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        :root {
+            --pico-font-size: 16px;
+        }
+        body {
+            padding: 1rem;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        header p {
+            color: var(--pico-muted-color);
+        }
+        .config-output {
+            font-family: monospace;
+            white-space: pre;
+            resize: vertical;
+            min-height: 200px;
+        }
+        .button-group {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .button-group button {
+            flex: 1;
+            min-width: 120px;
+        }
+        details {
+            margin-bottom: 1rem;
+        }
+        .error {
+            background-color: var(--pico-del-color);
+            color: white;
+            padding: 1rem;
+            border-radius: var(--pico-border-radius);
+            margin-bottom: 1rem;
+        }
+        .hidden {
+            display: none;
+        }
+        #generateBtn {
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <header>
+            <h1>WARP Config Generator</h1>
+            <p>Generate a WireGuard configuration for Cloudflare WARP. All processing happens in your browser.</p>
+        </header>
+
+        <button id="generateBtn">Generate WARP Config</button>
+
+        <details>
+            <summary>Advanced Options</summary>
+            <form id="optionsForm">
+                <label>
+                    DNS Servers
+                    <input type="text" name="dns" value="1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001">
+                </label>
+                <label>
+                    MTU
+                    <input type="number" name="mtu" value="1280">
+                </label>
+                <label>
+                    Allowed IPs
+                    <input type="text" name="allowedIps" value="0.0.0.0/0, ::/0">
+                </label>
+                <label>
+                    Persistent Keepalive (0 = disabled)
+                    <input type="number" name="keepalive" value="0" min="0">
+                </label>
+                <label>
+                    Device Type
+                    <input type="text" name="deviceType" value="Linux">
+                </label>
+                <label>
+                    Locale
+                    <input type="text" name="locale" value="en_US">
+                </label>
+            </form>
+        </details>
+
+        <div id="error" class="error hidden"></div>
+
+        <div id="outputSection" class="hidden">
+            <label>
+                WireGuard Configuration
+                <textarea id="configOutput" class="config-output" readonly></textarea>
+            </label>
+            <div class="button-group">
+                <button id="copyBtn" class="secondary">Copy to Clipboard</button>
+                <button id="downloadBtn" class="secondary">Download warp.conf</button>
+            </div>
+        </div>
+    </main>
+
+    <script src="wireguard.js"></script>
+    <script>
+        const CORS_PROXY = 'https://corsproxy.io/?';
+        const WARP_API = 'https://api.cloudflareclient.com/v0a737/reg';
+
+        const generateBtn = document.getElementById('generateBtn');
+        const copyBtn = document.getElementById('copyBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const configOutput = document.getElementById('configOutput');
+        const outputSection = document.getElementById('outputSection');
+        const errorDiv = document.getElementById('error');
+        const optionsForm = document.getElementById('optionsForm');
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorDiv.classList.add('hidden');
+        }
+
+        function getOptions() {
+            const formData = new FormData(optionsForm);
+            return {
+                dns: formData.get('dns'),
+                mtu: formData.get('mtu'),
+                allowedIps: formData.get('allowedIps'),
+                keepalive: formData.get('keepalive'),
+                deviceType: formData.get('deviceType'),
+                locale: formData.get('locale')
+            };
+        }
+
+        async function registerWithWarp(publicKey, options) {
+            const payload = {
+                key: publicKey,
+                install_id: '',
+                warp_enabled: true,
+                tos: new Date().toISOString(),
+                type: options.deviceType,
+                locale: options.locale
+            };
+
+            const response = await fetch(CORS_PROXY + encodeURIComponent(WARP_API), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || data.success === false) {
+                const errorMsg = data.errors?.[0]?.message || data.error?.message || 'Unknown error';
+                throw new Error(`API Error: ${errorMsg}`);
+            }
+
+            return data;
+        }
+
+        function generateConfig(privateKey, warpResponse, options) {
+            const peer = warpResponse.config.peers[0];
+            const iface = warpResponse.config.interface;
+
+            let config = `[Interface]
+PrivateKey = ${privateKey}
+Address = ${iface.addresses.v4}/32, ${iface.addresses.v6}/128
+DNS = ${options.dns}
+MTU = ${options.mtu}
+
+[Peer]
+PublicKey = ${peer.public_key}
+AllowedIPs = ${options.allowedIps}
+Endpoint = ${peer.endpoint.host}`;
+
+            if (options.keepalive && options.keepalive !== '0') {
+                config += `\nPersistentKeepalive = ${options.keepalive}`;
+            }
+
+            return config;
+        }
+
+        generateBtn.addEventListener('click', async () => {
+            hideError();
+            generateBtn.disabled = true;
+            generateBtn.setAttribute('aria-busy', 'true');
+            generateBtn.textContent = 'Generating...';
+
+            try {
+                // Generate WireGuard keypair
+                const keypair = window.wireguard.generateKeypair();
+                const options = getOptions();
+
+                // Register with Cloudflare WARP
+                const warpResponse = await registerWithWarp(keypair.publicKey, options);
+
+                // Generate config
+                const config = generateConfig(keypair.privateKey, warpResponse, options);
+
+                // Display config
+                configOutput.value = config;
+                outputSection.classList.remove('hidden');
+            } catch (err) {
+                showError(err.message);
+                outputSection.classList.add('hidden');
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.removeAttribute('aria-busy');
+                generateBtn.textContent = 'Generate WARP Config';
+            }
+        });
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(configOutput.value);
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy to Clipboard';
+                }, 2000);
+            } catch (err) {
+                showError('Failed to copy to clipboard');
+            }
+        });
+
+        downloadBtn.addEventListener('click', () => {
+            const blob = new Blob([configOutput.value], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'warp.conf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
