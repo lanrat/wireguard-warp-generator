@@ -184,12 +184,14 @@
         <footer>
             <p>A <a href="https://github.com/lanrat/wireguard-warp-generator/tree/main/scripts">command-line version</a> is also available.</p>
             <p><a href="https://github.com/lanrat/wireguard-warp-generator">View source on GitHub</a></p>
+            <p>CORS proxy by <a href="https://corsfix.com">Corsfix</a></p>
         </footer>
     </main>
 
     <script src="wireguard.js"></script>
     <script>
-        const CORS_PROXY = 'https://corsproxy.io/?';
+        //const CORS_PROXY = 'https://corsproxy.io/?';
+        const CORS_PROXY = 'https://proxy.corsfix.com/?';
         const WARP_API = 'https://api.cloudflareclient.com/v0a737/reg';
 
         const generateBtn = document.getElementById('generateBtn');
