@@ -5,11 +5,15 @@
 # Usage: ./warp-register.sh > warp.conf
 #        ./warp-register.sh -v > warp.conf  # verbose mode
 #        ./warp-register.sh --qr            # display QR code in terminal
+#        ./warp-register.sh --license xxxx-xxxx-xxxx --info --name "Ubuntu" --model "ThinkPad"  > warp.conf
 #
 # Options:
 #   -v, --verbose     Print verbose output including API response to stderr
 #   -q, --qr          Display QR code in terminal (requires qrencode)
 #   -i, --info        Display account info to stderr
+#   -l, --license KEY Apply a WARP+ license key after registration
+#   -n, --name NAME   Device name for registration
+#   -m, --model MODEL Device model for registration
 #
 # Environment variables (with defaults):
 #   WARP_DNS          - DNS servers (default: "1.1.1.1, 1.0.0.1")
@@ -27,6 +31,9 @@ set -euo pipefail
 VERBOSE=false
 SHOW_QR=false
 SHOW_INFO=false
+LICENSE_KEY=""
+DEVICE_NAME=""
+DEVICE_MODEL=""
 
 # Parse command line arguments
 parse_args() {
@@ -44,8 +51,32 @@ parse_args() {
                 SHOW_INFO=true
                 shift
                 ;;
+            -l|--license)
+                if [[ -z "${2:-}" ]]; then
+                    echo "Error: --license requires a key argument" >&2
+                    exit 1
+                fi
+                LICENSE_KEY="$2"
+                shift 2
+                ;;
+            -n|--name)
+                if [[ -z "${2:-}" ]]; then
+                    echo "Error: --name requires an argument" >&2
+                    exit 1
+                fi
+                DEVICE_NAME="$2"
+                shift 2
+                ;;
+            -m|--model)
+                if [[ -z "${2:-}" ]]; then
+                    echo "Error: --model requires an argument" >&2
+                    exit 1
+                fi
+                DEVICE_MODEL="$2"
+                shift 2
+                ;;
             -h|--help)
-                head -n 22 "$0" | tail -n +2 | sed 's/^# \?//'
+                head -n 26 "$0" | tail -n +2 | sed 's/^# \?//'
                 exit 0
                 ;;
             *)
@@ -117,17 +148,24 @@ generate_keypair() {
 # Register with Cloudflare WARP API
 register_with_warp() {
     local payload
-    payload=$(cat <<EOF
-{
-    "key": "$PUBLIC_KEY",
-    "install_id": "",
-    "warp_enabled": true,
-    "tos": "$WARP_TOS_DATE",
-    "type": "$WARP_DEVICE_TYPE",
-    "locale": "$WARP_LOCALE"
-}
-EOF
-)
+    payload=$(jq -n \
+        --arg key "$PUBLIC_KEY" \
+        --arg tos "$WARP_TOS_DATE" \
+        --arg type "$WARP_DEVICE_TYPE" \
+        --arg locale "$WARP_LOCALE" \
+        --arg name "$DEVICE_NAME" \
+        --arg model "$DEVICE_MODEL" \
+        '{
+            key: $key,
+            install_id: "",
+            warp_enabled: true,
+            tos: $tos,
+            type: $type,
+            locale: $locale
+        }
+        + (if $name != "" then {name: $name} else {} end)
+        + (if $model != "" then {model: $model} else {} end)'
+    )
 
     log_verbose "Request payload:"
     if [[ "$VERBOSE" == true ]]; then
@@ -216,6 +254,42 @@ display_account_info() {
     echo "" >&2
 }
 
+# Apply license key to registered device
+apply_license_key() {
+    local device_id token license_response
+    device_id=$(echo "$WARP_RESPONSE" | jq -r '.id')
+    token=$(echo "$WARP_RESPONSE" | jq -r '.token')
+
+    if [[ -z "$device_id" || "$device_id" == "null" ]]; then
+        echo "Error: Could not extract device ID for license activation" >&2
+        exit 1
+    fi
+
+    if [[ -z "$token" || "$token" == "null" ]]; then
+        echo "Error: Could not extract token for license activation" >&2
+        exit 1
+    fi
+
+    log_verbose "Applying license key to device: $device_id"
+
+    license_response=$(curl -sS -f -X PATCH \
+        "${WARP_API_URL}/${device_id}/account" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${token}" \
+        -d "{\"license\": \"${LICENSE_KEY}\"}" 2>&1) || {
+        echo "Error: Failed to apply license key" >&2
+        echo "Response: $license_response" >&2
+        exit 1
+    }
+
+    log_verbose "License response:"
+    if [[ "$VERBOSE" == true ]]; then
+        echo "$license_response" | jq . >&2
+    fi
+
+    echo "License key applied successfully." >&2
+}
+
 # Generate WireGuard configuration
 generate_wireguard_config() {
     local address="$INTERFACE_IPV4/32"
@@ -277,6 +351,12 @@ main() {
 
     echo "Parsing response..." >&2
     parse_warp_response
+
+    # Apply license key if provided
+    if [[ -n "$LICENSE_KEY" ]]; then
+        echo "Applying license key..." >&2
+        apply_license_key
+    fi
 
     # Display account info if requested
     if [[ "$SHOW_INFO" == true ]]; then

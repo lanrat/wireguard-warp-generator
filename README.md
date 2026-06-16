@@ -18,6 +18,9 @@ Command-line tool for generating WARP configs. See [scripts/README.md](scripts/R
 
 # With QR code and account info
 ./scripts/warp-register.sh --qr --info > warp.conf
+
+# Register with your WARP+ Unlimited license
+./scripts/warp-register.sh --license xxxx-xxxx-xxxx --info --name "Ubuntu" --model "ThinkPad X1"  > warp.conf
 ```
 
 ## How It Works
