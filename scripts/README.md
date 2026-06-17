@@ -26,6 +26,12 @@ Shell script to register with Cloudflare WARP and generate a WireGuard configura
 
 # Combined flags
 ./warp-register.sh --qr --info > warp.conf
+
+# Register with WARP+ Unlimited license
+./warp-register.sh --license xxxx-xxxx-xxxx --info > warp.conf
+
+# With custom device name and model to manage from Android App
+./warp-register.sh --license xxxx-xxxx-xxxx --info --name "Ubuntu" --model "ThinkPad X1" > warp.conf
 ```
 
 ## Options
@@ -35,6 +41,9 @@ Shell script to register with Cloudflare WARP and generate a WireGuard configura
 | `-v, --verbose` | Print verbose output including API response |
 | `-q, --qr` | Display QR code in terminal (requires `qrencode`) |
 | `-i, --info` | Display account info (ID, license, expiry) |
+| `-l, --license KEY` | Apply a WARP+ license key after registration |
+| `-n, --name NAME` | Device name for registration |
+| `-m, --model MODEL` | Device model for registration |
 | `-h, --help` | Show help message |
 
 ## Environment Variables
